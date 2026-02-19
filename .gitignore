@@ -1,0 +1,13 @@
+# Old archived versions
+orc_modeling_v0_01/
+orc_modeling_v0_02/
+
+# Python
+__pycache__/
+*.pyc
+
+# VSCode
+.vscode/
+
+# Environment
+.env

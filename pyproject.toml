@@ -1,0 +1,21 @@
+[project]
+name = "orc_modeling"
+version = "0.1.0"
+description = "ORC modeling framework (utils + fluid props + equipment + plant solving)"
+requires-python = ">=3.10"
+dependencies = [
+  "pint>=0.22",
+  "numpy>=1.24",
+  # add later, when stable:
+  # "thermo>=0.2.27",
+  # "pandas",
+  # "openpyxl",
+]
+
+[project.scripts]
+orc-modeling = "orc_modeling.cli.main:main"
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+

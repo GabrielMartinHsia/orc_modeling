@@ -1,0 +1,29 @@
+{
+  "run_name": "simple_orc_demo",
+  "plant_name": "Simple ORC",
+  "fluid": { "name": "isopentane", "backend": "simple" },
+
+  "equipment": {
+    "pump": { "name": "P-101", "eta_is": 0.75 },
+    "heater": { "name": "E-201" },
+    "turbine": { "name": "T-301", "eta_is": 0.85 },
+    "condenser": { "name": "C-401" }
+  },
+
+  "boundary_conditions": {
+    "mdot": { "value": 10, "units": "kg/s" },
+    "heat_input": { "value": 10, "units": "MW" },
+    "condenser_T_out": { "value": 35, "units": "degC" }
+  },
+
+  "design_vars": {
+    "P-101.P_out": { "value": 25, "units": "bar" },
+    "T-301.P_out": { "value": 1.5, "units": "bar" }
+  },
+
+  "targets": {
+    "net_power": { "value": 2.5, "units": "MW" }
+  },
+
+  "solver_options": { "max_iter": 25, "tol": 1e-4, "fd_eps": 1e-3 }
+}
