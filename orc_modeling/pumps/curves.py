@@ -90,6 +90,12 @@ class PumpCurve:
     # Reference efficiency
     eta_ref: Optional[Callable[[float], float]] = None
 
+    # Reference shaft power [W] at N_ref_rpm (optional)
+    P_ref_W: Optional[Callable[[float], float]] = None
+
+    # Reference NPSHr [m] at N_ref_rpm (optional)
+    NPSHr_ref_m: Optional[Callable[[float], float]] = None
+
     # Optional reference samples (used for linear fallback / debugging)
     _samples: Optional[Tuple[Tuple[float, ...], Tuple[float, ...]]] = None
 
@@ -100,6 +106,8 @@ class PumpCurve:
         *,
         N_ref_rpm: float,
         eta: Optional[Sequence[float]] = None,
+        power_W: Optional[Sequence[float]] = None,
+        npshr_m: Optional[Sequence[float]] = None,
         use_scipy_pchip: bool = True,
     ) -> "PumpCurve":
         if len(Q_m3_s) < 2:
@@ -143,12 +151,56 @@ class PumpCurve:
                 import numpy as np
                 eta_ref = lambda Q: float(np.interp(Q, Q_m3_s, eta))
 
+        P_ref_W = None
+        if power_W is not None:
+            if len(power_W) != len(Q_m3_s):
+                raise ValueError("power_W must be same length as Q_m3_s")
+            Pw = tuple(float(p) for p in power_W)
+
+            if use_scipy_pchip and _HAVE_SCIPY:
+                p_interp = PchipInterpolator(Qs, Pw, extrapolate=False)
+
+                def P_ref(q: float) -> float:
+                    qf = float(q)
+                    if qf < qmin or qf > qmax:
+                        qf = min(max(qf, qmin), qmax)
+                    return float(p_interp(qf))
+
+                P_ref_W = P_ref
+            else:
+                def P_ref(q: float) -> float:
+                    return _linear_interp(float(q), Qs, Pw)
+                P_ref_W = P_ref
+
+        NPSHr_ref_m = None
+        if npshr_m is not None:
+            if len(npshr_m) != len(Q_m3_s):
+                raise ValueError("npshr_m must be same length as Q_m3_s")
+            Nm = tuple(float(x) for x in npshr_m)
+
+            if use_scipy_pchip and _HAVE_SCIPY:
+                n_interp = PchipInterpolator(Qs, Nm, extrapolate=False)
+
+                def N_ref(q: float) -> float:
+                    qf = float(q)
+                    if qf < qmin or qf > qmax:
+                        qf = min(max(qf, qmin), qmax)
+                    return float(n_interp(qf))
+
+                NPSHr_ref_m = N_ref
+            else:
+                def N_ref(q: float) -> float:
+                    return _linear_interp(float(q), Qs, Nm)
+                NPSHr_ref_m = N_ref
+
         return PumpCurve(
             N_ref_rpm=float(N_ref_rpm),
             Q_min_m3_s=qmin,
             Q_max_m3_s=qmax,
             H_ref=H_ref,
             eta_ref=eta_ref,
+            P_ref_W=P_ref_W,
+            NPSHr_ref_m=NPSHr_ref_m,
             _samples=(Qs, Hs),
         )
     
@@ -160,6 +212,30 @@ class PumpCurve:
             Q_ref, _ = self._affinity_scale(Q_m3_s, N_rpm)
 
             return float(self.eta_ref(Q_ref))
+    
+    def power_W(self, Q_m3_s: float, *, N_rpm: float) -> float:
+        """
+        Shaft power [W] at flow Q and speed N.
+        Assumption: centrifugal affinity => P ~ N^3, Q ~ N.
+        """
+        if self.P_ref_W is None:
+            raise ValueError("No power data available on this PumpCurve")
+
+        Q_ref, _H = self._affinity_scale(Q_m3_s, N_rpm)
+        r = float(N_rpm) / self.N_ref_rpm
+        return float((r ** 3) * float(self.P_ref_W(Q_ref)))
+
+    def NPSHr_m(self, Q_m3_s: float, *, N_rpm: float) -> float:
+        """
+        NPSHr [m] at flow Q and speed N.
+        Common approximation: NPSHr ~ N^2, Q ~ N.
+        """
+        if self.NPSHr_ref_m is None:
+            raise ValueError("No NPSHr data available on this PumpCurve")
+
+        Q_ref, _H = self._affinity_scale(Q_m3_s, N_rpm)
+        r = float(N_rpm) / self.N_ref_rpm
+        return float((r ** 2) * float(self.NPSHr_ref_m(Q_ref)))
 
     def _affinity_scale(self, Q: float, N_rpm: float) -> Tuple[float, float]:
         """
