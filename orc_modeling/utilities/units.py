@@ -23,6 +23,7 @@ U_RHO = ureg.kilogram / (ureg.meter ** 3)
 U_MU = ureg.pascal * ureg.second
 U_CP = ureg.joule / (ureg.kilogram * ureg.kelvin)
 U_CV = ureg.joule / (ureg.kilogram * ureg.kelvin)
+U_A = ureg.meter / ureg.second
 
 # Clean boundary conversions: 
 # ...if a user passes a float --> assume SI (canonical)

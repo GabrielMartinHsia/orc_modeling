@@ -7,7 +7,7 @@ from .base import FluidBackend, FluidAPI
 from orc_modeling.utilities.units import (
     ureg, Q_,
     to_si, as_qty,
-    U_T, U_P, U_S, U_H, U_RHO, U_MU, U_CP, U_CV
+    U_T, U_P, U_S, U_H, U_RHO, U_MU, U_CP, U_CV, U_A
 )
 
 NumberOrQty = Union[float, int, pint.Quantity]
@@ -95,6 +95,10 @@ class Fluid:
         T_K = to_si(T, U_T)
         P_Pa = to_si(P, U_P)
         return as_qty(self.backend.cv(T_K, P_Pa), U_CV, self.return_quantity)
+    
+    def a(self, T: NumberOrQty, P: NumberOrQty):
+        T_K = to_si(T, U_T); P_Pa = to_si(P, U_P)
+        return as_qty(self.backend.a(T_K, P_Pa), U_A, self.return_quantity)
 
     # ---- critical point ----
     def T_crit(self):
@@ -111,6 +115,9 @@ def make_fluid(fluid_id: str, backend: str = "thermo", return_quantity: bool = T
     elif backend == "refprop":
         from .refprop_backend import RefpropBackend
         b = RefpropBackend(fluid_id)
+    elif backend == "coolprop":
+        from .coolprop_backend import CoolPropBackend
+        b = CoolPropBackend(fluid_id)
     else:
         raise ValueError(f"Unknown backend: {backend}")
     return Fluid(backend=b, return_quantity=return_quantity)

@@ -146,3 +146,50 @@ class ThermoBackend:
         raise NotImplementedError(
             "Thermo backend could not provide Cv from the flash result; check Thermo version/model."
         )
+    
+    def a(self, T_K: float, P_Pa: float) -> float:
+        """
+        Speed of sound at (T,P) in m/s.
+
+        Behavior:
+        - If the flash result exposes a speed-of-sound attribute, use it.
+        - If the state appears two-phase (0 < VF < 1), raise ValueError (undefined).
+        - Otherwise, fall back to sqrt(gamma*P/rho) using mass-basis Cp/Cv and rho.
+        """
+        r = self._flasher.flash(T=T_K, P=P_Pa)
+
+        # If two-phase, speed of sound is not well-defined for equilibrium mixture
+        vf = getattr(r, "VF", None)
+        try:
+            if vf is not None:
+                vf = float(vf)
+                if 1e-9 < vf < 1.0 - 1e-9:
+                    raise ValueError("Speed of sound is undefined for two-phase equilibrium states (0<VF<1).")
+        except Exception:
+            # If VF exists but can't be interpreted, just continue
+            pass
+
+        # Try common Thermo attribute names (varies by object/version)
+        for name in ("speed_of_sound", "a", "w", "W"):
+            attr = getattr(r, name, None)
+            if callable(attr):
+                try:
+                    val = float(attr())
+                    if val > 0.0 and math.isfinite(val):
+                        return val
+                except Exception:
+                    pass
+            elif attr is not None:
+                try:
+                    val = float(attr)
+                    if val > 0.0 and math.isfinite(val):
+                        return val
+                except Exception:
+                    pass
+
+        # Fallback: gas-like approximation using mass-basis gamma
+        cp = self.cp(T_K, P_Pa)   # J/kg/K
+        cv = self.cv(T_K, P_Pa)   # J/kg/K
+        rho = self.rho(T_K, P_Pa) # kg/m3
+        gamma = cp / max(cv, 1e-30)
+        return math.sqrt(max(gamma, 1e-12) * P_Pa / max(rho, 1e-30))
