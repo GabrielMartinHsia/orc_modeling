@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from typing import Dict, Optional, Tuple
+from .base import FluidSpec, ws_to_zs
 
 # Note:
 #   Requires:
@@ -95,33 +96,44 @@ class RefpropBackend:
     All inputs/outputs are SI on a MASS basis:
       T [K], P [Pa], h [J/kg], s [J/kg/K], rho [kg/m3], mu [Pa*s], cp/cv [J/kg/K]
     """
-    fluid_id: str
+    fluid_spec: FluidSpec
     refprop_root: Optional[str] = None
     ref_state: str = "DEF"  # REFPROP reference state (DEF is standard; can change later)
 
     def __post_init__(self):
         self._rp = _get_rp(self.refprop_root)
-        self._fluid = _canonical_refprop_name(self.fluid_id)
-
-        # Prefer mass-basis SI units directly from REFPROPdll. :contentReference[oaicite:3]{index=3}
         self._IU_MASS_SI = _get_unit_enum(self._rp, "MASS BASE SI")
 
-        # Load fluid once per process instance (safe for repeated calls)
-        # SETFLUIDS is recommended for repeated evaluation patterns. :contentReference[oaicite:4]{index=4}
-        if not _LOADED_FLUIDS.get(self._fluid, False):
-            self._rp.SETFLUIDSdll(self._fluid)
-            _LOADED_FLUIDS[self._fluid] = True
+        comps = [_canonical_refprop_name(x) for x in self.fluid_spec.ids]
+        self._is_mixture = self.fluid_spec.is_mixture
 
-        # Set reference state (optional). Signature is a bit finicky across versions;
-        # if it fails, we leave default behavior.
+        self._fluid = "|".join(comps) if self._is_mixture else comps[0]
+        self._rp.SETFLUIDSdll(self._fluid)
         self._try_setref(self.ref_state)
 
-        # Pure fluid composition vector:
-        self._z = [1.0]
+        self._MWs_kg_per_mol = []
+        for comp in comps:
+            self._rp.SETFLUIDSdll(comp)
+            info = self._rp.INFOdll(1)
+            mw = getattr(info, "wmm", None)
+            if mw is None:
+                mw = getattr(info, "wm", None)
+            if mw is None:
+                raise AttributeError("REFPROP INFOdlloutput missing both 'wmm' and 'wm' molecular-weight fields.")
+            self._MWs_kg_per_mol.append(float(mw) / 1000.0)
 
-        # Cache critical props (computed lazily)
-        self._Tc: Optional[float] = None
-        self._Pc: Optional[float] = None
+        self._rp.SETFLUIDSdll(self._fluid)
+
+        if self._is_mixture:
+            if self.fluid_spec.composition_basis == "mass":
+                self._z = list(ws_to_zs(self.fluid_spec.composition, self._MWs_kg_per_mol))
+            else:
+                self._z = list(self.fluid_spec.composition)
+        else:
+            self._z = [1.0]
+
+        self._Tc = None
+        self._Pc = None
 
     # -----------------------------
     # Low-level helpers
@@ -152,20 +164,26 @@ class RefpropBackend:
         _raise_if_error(int(r.ierr), str(r.herr), f"REFPROPdll({hIn}->{hOut})")
         out = tuple(float(r.Output[i]) for i in range(n))
         return out
+    
+    def _require_pure(self, name: str):
+        if self._is_mixture:
+            raise NotImplementedError(f"{name} is not implemented for mixtures in RefpropBackend.")
 
     # -----------------------------
     # Critical point
     # -----------------------------
     def T_crit(self) -> float:
+        if self._is_mixture:
+            raise NotImplementedError("Mixture critical temperature is not implemented in RefpropBackend.")
         if self._Tc is None:
             self._load_crit()
-        assert self._Tc is not None
         return self._Tc
 
     def p_crit(self) -> float:
+        if self._is_mixture:
+            raise NotImplementedError("Mixture critical pressure is not implemented in RefpropBackend.")
         if self._Pc is None:
             self._load_crit()
-        assert self._Pc is not None
         return self._Pc
 
     def _load_crit(self) -> None:
@@ -196,10 +214,11 @@ class RefpropBackend:
     # Saturation
     # -----------------------------
     def p_sat(self, T_K: float) -> float:
-        # Use TQ (T, quality) to get saturation P; quality value doesn't matter for P at saturation
+        self._require_pure("p_sat")
         return self._refprop("TQ", "P", T_K, 0.0)
 
     def T_sat(self, P_Pa: float) -> float:
+        self._require_pure("T_sat")
         return self._refprop("PQ", "T", P_Pa, 0.0)
 
     def p_vap(self, T_K: float) -> float:
@@ -207,27 +226,33 @@ class RefpropBackend:
         return self.p_sat(T_K)
 
     def s_sat_liq(self, P_Pa: float) -> float:
+        self._require_pure("s_sat_liq")
         return self._refprop("PQ", "S", P_Pa, 0.0)
 
     def s_sat_vap(self, P_Pa: float) -> float:
+        self._require_pure("s_sat_vap")
         return self._refprop("PQ", "S", P_Pa, 1.0)
 
     def s_fg(self, P_Pa: float) -> float:
         return self.s_sat_vap(P_Pa) - self.s_sat_liq(P_Pa)
 
     def h_sat_liq(self, P_Pa: float) -> float:
+        self._require_pure("h_sat_liq")
         return self._refprop("PQ", "H", P_Pa, 0.0)
 
     def h_sat_vap(self, P_Pa: float) -> float:
+        self._require_pure("h_sat_vap")
         return self._refprop("PQ", "H", P_Pa, 1.0)
 
     def h_fg(self, P_Pa: float) -> float:
         return self.h_sat_vap(P_Pa) - self.h_sat_liq(P_Pa)
 
     def rho_sat_liq(self, P_Pa: float) -> float:
+        self._require_pure("rho_sat_liq")
         return self._refprop("PQ", "D", P_Pa, 0.0)
 
     def rho_sat_vap(self, P_Pa: float) -> float:
+        self._require_pure("rho_sat_vap")
         return self._refprop("PQ", "D", P_Pa, 1.0)
 
     # -----------------------------
